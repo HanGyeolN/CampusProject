@@ -1,0 +1,37 @@
+---
+title: "Product Review Sentiment Analysis"
+output: rmarkdown::github_document
+---
+```{r}
+library(dplyr)
+library(readr)
+library(ggplot2)
+library(tidyr)
+library(tidytext)
+
+```
+
+제품 리뷰 감성분석 -> group_by 감성 -> 긍정/부정적인 리뷰에서 자주 등장한 단어 추출
+-> 강점 / 약점 분석 
+
+
+## 1. Load Data
+```{r}
+my.text.location = "C:/Users/user/Desktop/CampusProject/Sentiment Analysis/ReviewData/"
+
+read_lines("C:/Users/user/Desktop/CampusProject/Sentiment Analysis/ReviewData/lg-gb-450.txt")->a
+a
+str_split(a, "(\\', \\')|(\", \\")|(\', \")|(\", \\')")  " ' " ' " ' 
+
+
+mypaper <- VCorpus(DirSource(my.text.location))
+inspect(mypaper)
+a<-mypaper[[1]]$content
+
+str_split(a,"', '")
+
+
+```
+
+
+* source: https://www.productreview.com.au/
