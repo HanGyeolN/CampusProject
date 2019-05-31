@@ -1,0 +1,322 @@
+---
+title: "Amazon Reviews"
+output: rmarkdown::github_document
+---
+```{r}
+library(KoNLP)
+library(rvest)
+library(stringr)
+library(rJava)
+library(dplyr)
+library(readr)
+library(ggplot2)
+library(tidyr)
+library(tidytext)
+library(RWeka)
+library(tm)
+library(SnowballC)
+```
+
+## 리뷰 크롤링
+```{r}
+productName="Winix-Purifier"
+# 위닉스 공기청정기:https://www.amazon.com/Winix-5500-2-Purifier-PlasmaWave-Reducing/product-reviews/B01D8DAYII/ref=cm_cr_arp_d_paging_btm_next_2?ie=UTF8&reviewerType=all_reviews&pageNumber=
+# 다이슨 코드제로:https://www.amazon.com/Dyson-Motorhead-Cordless-Cleaner-227591-01/product-reviews/B01MSZ036Q/ref=cm_cr_arp_d_paging_btm_next_2?&reviewerType=all_reviews&pageNumber=
+# 삼성 m.2 ssd:"https://www.amazon.com/Samsung-970-PRO-512GB-MZ-V7P512BW/product-reviews/B07C8Y31G2/ref=cm_cr_arp_d_paging_btm_next_2?ie=UTF8&reviewerType=all_reviews&pageNumber="
+
+url.base<-"https://www.amazon.com/Samsung-970-PRO-512GB-MZ-V7P512BW/product-reviews/B07C8Y31G2/ref=cm_cr_arp_d_paging_btm_next_2?ie=UTF8&reviewerType=all_reviews&pageNumber="
+page = 1
+
+url<-paste0(url.base, page, collapse="")
+
+#################################
+# 차단 우회용 헤더 추가
+header = httr::user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36")
+
+request_result <- httr::GET(url,header)
+
+```
+
+
+```{r}
+#########################################
+# 원래 꺼 -> 막힘
+# htxt<-read_html(url,headers = header)
+
+
+#########################################
+# 수정 후 -> user-agent 헤더 추가
+htxt<-read_html(request_result$content)
+
+reviews.count <- htxt %>%
+  html_nodes("[data-hook=total-review-count]") %>%
+  html_text
+
+# 숫자 1000자리 구분 컴마 제거
+reviews.count<-str_replace_all(reviews.count,"[[:punct:]]","")
+page.end = ceiling(as.integer(reviews.count)/10)
+
+# 저장할 변수 초기화
+reviews.all <- c()
+stars.all <- c()
+dates.all <- c()
+
+# for (page in 1:page.end){
+#   url<-paste0(url.base,page,collapse="")
+#   request_result <- httr::GET(url,header)
+#   htxt<-read_html(request_result$content)
+#   
+#   #################################
+#   # 리뷰 크롤링
+#   reviews.temp <- htxt %>%
+#   html_nodes("[data-hook=review-body]") %>%
+#   html_text %>% 
+#   str_replace_all("[[:space:]]{1,}", " ")
+#   
+#   #################################
+#   # 평점 크롤링
+#   stars.temp <- htxt %>% 
+#     html_nodes("[id=cm_cr-review_list]") %>% 
+#     html_nodes("[class=a-icon-alt]") %>% 
+#     html_text %>% 
+#     str_extract_all("\\b[[:digit:]]\\.[[:digit:]]") %>% 
+#     unlist()
+# 
+#   #################################
+#   # 날짜 크롤링
+#   
+#   dates.temp <- htxt %>% 
+#     html_nodes("[id=cm_cr-review_list]") %>% 
+#     html_nodes("[data-hook=review-date]") %>% 
+#     html_text
+#     
+#   dates.all<-c(dates.all, dates.temp)
+#   stars.all<-c(stars.all, stars.temp)
+#   reviews.all<-c(reviews.all, reviews.temp)
+#   
+#   if(is.na(reviews.temp[1])){
+#     print("Blocked")
+#     break
+#   }
+#   
+#   print(paste("page", page, "complete"))
+# }
+# 
+# print("길이체크")
+# print(length(reviews.all)==length(stars.all)&length(stars.all)==length(dates.all))
+# 
+# Data<-tibble("id" = c(1:length(reviews.all)), "content"=reviews.all, "date"=dates.all, "star"=stars.all)
+# 
+fileName = paste0(productName,".csv", collapse="")
+# 
+# write.table(Data,fileName)
+# 
+# print(paste("전체 페이지 갯수:", page.end))
+# print(paste("전체 리뷰 갯수:", length(reviews.all)))
+
+Data<-read.table(fileName, stringsAsFactors = F)
+```
+
+## 리뷰 감성분석
+```{r}
+reviews <- Data
+result <- Data
+# View(reviews.all)
+reviews.word <- Data %>% 
+  unnest_tokens(word, content)
+
+# positive 갯수 추출을 위한 객체 
+pos <- reviews.word %>% 
+  inner_join(get_sentiments("bing"), by="word") %>% 
+  count(id,sentiment) %>% 
+  filter(sentiment=="positive") %>% 
+  select(id,n)
+
+# 감성 결과 분석
+result.word <- reviews.word %>% 
+  inner_join(get_sentiments("bing"), by="word") %>% 
+  mutate(wordScore=ifelse(sentiment=="positive", 1, -1)) %>% 
+  group_by(id) %>% 
+  summarise(score=sum(wordScore),total=sum(abs(wordScore)))
+
+result <- left_join(result, result.word, all.x=T, by="id") #감성 score 합치기
+result <- left_join(result, pos,by="id",all.x=T) #positive 갯수 합치기
+result <- rename(result,"positive"=n) #이름 수정 
+
+# 변환후 전체 갯수 확인
+# table(result$positive, useNA = "always")
+#result[673,]
+
+result$positive[which(is.na(result$positive))]<-0
+result$negative <- result$total - result$positive
+
+# 긍정률 부정률 
+result$pos.rate <- result$positive/result$total
+result$pos.rate[which(is.na(result$pos.rate))] <- 0
+result$neg.rate <- result$negative/result$total
+result$neg.rate[which(is.na(result$neg.rate))] <- 0
+#View(result)
+
+# x테스트
+# result
+# View(result)
+# length(result$total)
+# length(result$positive)
+# length(reviews.all)
+# length(result$id)
+```
+
+
+## 긍/부정리뷰 갯수 세기 
+```{r}
+
+result.table<-table(result$score)
+result.table<-as.data.frame(result.table,stringsAsFactors = F)
+result.table$Var1<-as.integer(result.table$Var1)
+# result.table
+
+table.len<-length(result.table$Var1)
+
+number.of.positive.review = 0
+number.of.negative.review = 0
+number.of.neutral.review = 0
+
+# result.table$Var1[1]
+for (i in 1:table.len){
+  ifelse(result.table$Var1[i] > 0, number.of.positive.review <- number.of.positive.review + result.table$Freq[i], 
+         ifelse(result.table$Var1[i] < 0, number.of.negative.review <- number.of.negative.review + result.table$Freq[i], 
+                number.of.neutral.review <- number.of.neutral.review + result.table$Freq[i]))
+}
+
+print(paste("+ :", number.of.positive.review)) #998
+print(paste("- :", number.of.negative.review)) #137
+print(paste("0 :", number.of.neutral.review))
+
+```
+
+
+## 전체 평점 그래프
+```{r}
+ggplot(result.table, aes(x=Var1,y=Freq))+
+  geom_col(fill = 'royalblue')+
+  xlab('Sentiment Score')+
+  ylab('Reviews')+
+  theme_bw()+
+  geom_vline(aes(xintercept=0))+
+  ggtitle('Sentiment-Score for Review')
+```
+
+
+## 검증그래프 (score / stars)
+```{r}
+
+result.plot<-result
+  
+ggplot(result.plot,aes(x=score, y=star))+
+  geom_jitter()+
+  geom_vline(aes(xintercept=0))+
+  geom_hline(aes(yintercept=3)) 
+
+
+```
+
+
+
+## 개요
+```{r}
+
+result %>% 
+  arrange(desc(score)) %>%
+  head(10) 
+
+result %>% 
+  arrange(score) %>% 
+  head(10)
+
+```
+
+```{r}
+target.postop <- which.max(result$score) 
+
+reviews$content[target.postop]
+```
+
+## 가장 부정적인리뷰 보여주기
+```{r}
+target.negtop <- which.min(result$score) 
+
+reviews$content[target.negtop]
+```
+
+
+## TDM
+```{r}
+
+mycorpus<-VCorpus(VectorSource(result$content))
+temp2<-mycorpus
+for(i in 1:length(mycorpus)){
+  # 1. 공백, 숫자, 기호 전처리
+  temp2[[i]]$content<-str_replace_all(temp2[[i]]$content,"[[:space:]]{1,}", " ")
+  temp2[[i]]$content<-str_replace_all(temp2[[i]]$content,"[[:digit:]]{1,}","")
+  temp2[[i]]$content<-str_replace_all(temp2[[i]]$content,"[[:punct:]]{1,}","")
+}
+
+# 2. 불용어 사전 이용해서 불용어 제거
+tm_map(temp2, FUN = removeWords, words = stopwords("en"))->temp2
+#tm_map(temp2, FUN = removeWords, words = stopwords("SMART"))->temp2
+temp2
+
+# 3. wordstem으로 어근 변환 # 
+for(i in 1:length(mycorpus)){
+  temp2[[i]]$content<-wordStem(temp2[[i]]$content)
+}
+
+myTDM<-TermDocumentMatrix(temp2)
+ti<-weightTfIdf(myTDM)
+
+```
+
+
+
+## tfidf기반 Keyword 추출 
+```{r}
+tempV <-list()
+
+# class(ti[,1]$dimnames$Terms[head(order(ti[,1]$v, decreasing = T),10)])
+                      
+# result$keyword[1]
+# ti[,1]$i # 1번 문서에 등장한 단어 index
+# ti[,1]$v # 1번 문서에 등장한 단어의 가중치
+# 
+# (order(ti[,1]$v, decreasing = T)) # 1번 문서에서 가중치 순위의 index # 가중치가 높은게 1이 되도록
+# sort(ti[,1]$i,)
+
+# max(ti[,1]$v)
+ti[,1]$v[66] # -> v의 max가 66번 인덱스다. order의 첫번째와 일치
+test<-head(order(ti[,1]$v, decreasing = T), 10) # 그중에서 상위 10개 인덱스
+
+# 1번 리뷰에서 가중치가 높은 단어들 
+top10 <- ti[,1]$dimnames$Terms[test] # 가중치가 가장 높은 10개 단어 추출
+```
+
+
+
+
+
+```{r}
+
+
+
+
+
+```
+
+
+
+
+
+
+
+
+
+

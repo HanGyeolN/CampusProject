@@ -71,6 +71,12 @@ reviews.word %>%
   arrange(review.id) ->
   reviews.result
 
+print(reviews.result)
+```
+
+
+```{r}
+
 # 7.계산
 reviews.result %>% 
   group_by(review.id) %>% 
@@ -131,6 +137,7 @@ for(i in 1:length(mycorpus)){
 
 # 2. 불용어 사전 이용해서 불용어 제거
 tm_map(temp2, FUN = removeWords, words = stopwords("en"))->temp2
+
 
 # 3. wordstem으로 어근 변환 # library(SnowballC)
 for(i in 1:length(mycorpus)){
